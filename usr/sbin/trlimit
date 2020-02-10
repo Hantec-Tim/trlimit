@@ -1,0 +1,155 @@
+#!/bin/sh
+. /lib/trlimit/trlimit.sh
+. /lib/trlimit/emailSender.sh
+
+getInterfaceTraffic() {
+	local interface
+	interface=$1
+	local year
+	year=$(date +"%Y")
+	local month
+	month=$(date +"%m")
+	local json
+	json="$(vnstat -i "$interface" --json m)"
+	local monthsData
+	monthsData=$(echo "$json" | jsonfilter -e '$.interfaces[@.id="'"$interface"'"].traffic.months')
+	local this_month
+	this_month=$(echo "$monthsData" | jsonfilter -e '$[@.date.year='$((year))' && @.date.month='$((month))']')
+	local rx
+	rx=$(echo "$this_month" | jsonfilter -e '$.rx')
+	local tx
+	tx=$(echo "$this_month" | jsonfilter -e '$.tx')
+	echo $((rx + tx))
+}
+
+initQosConfig() {
+	stopQOS
+	local wasOverwritten
+	wasOverwritten=$(uci -q get qos."$OVERWRITTEN_STR")
+	local error=$?
+	if [ $error = 0 ]
+	then
+		# if the backupfile does exist, overwrite the qos file
+		# this indicates a previous termination of trlimit without clean-up 
+		if [ -f "$QOS_BACKUP_FILE" ]		
+		then
+			log warning "Trlimit is reseting the qos config. This indicates a previous termination of trlimit without clean-up."
+			cp "$QOS_BACKUP_FILE" "$QOS_CONFIG_FOLDER" #backup -> qos
+		else
+			log error "The qos config file was already used by trlimit. The backupfile does not exist. Restore it manually.\n"
+			exit 1
+		fi
+	else
+		# if this folder does not exist, create it
+		if [ ! -d "$QOS_BACKUP_FOLDER" ]
+			then
+			mkdir "$QOS_BACKUP_FOLDER"
+			log notice "$QOS_BACKUP_FOLDER created"
+		fi
+		cp "$QOS_CONFIG_FILE" "$QOS_BACKUP_FOLDER"	#qos -> backup
+		log notice "$QOS_CONFIG_FILE was copied to $QOS_BACKUP_FOLDER"
+	fi
+	
+	
+	#read trlimit config file
+
+	setAllLimitsToOff	# /lib/trlimit/trlimit.sh
+	startQos
+}
+checkAll() {
+	log info "trlimit check"
+	config_load "$CONFIG_FILE"
+	config_foreach checkOneInterface interfaceLimit
+}
+checkOneInterface() {
+
+	local interfaceLimit="$1"
+	local interface
+	local interfaceNick
+	local enabled
+	local upload_limit
+	local download_limit
+	local threshold
+	local alert_enabled
+	config_load "$CONFIG_FILE"
+	config_get interface "$interfaceLimit" "interface"
+	config_get interfaceNick "$interfaceLimit" "interfaceNick"
+	config_get_bool enabled "$interfaceLimit" "enabled"
+	config_get upload_limit "$interfaceLimit" "upload_limit"
+	config_get download_limit "$interfaceLimit" "download_limit"
+	config_get threshold "$interfaceLimit" "threshold"
+	config_get_bool alert_enabled "$interfaceLimit" "alert_enabled"
+	
+	local traffic
+	traffic=$(getInterfaceTraffic "$interface")
+	
+	if [ "$enabled" != 0 ]
+	then
+
+		if [ "$traffic" -gt  "$threshold" ]
+		then
+			
+			local alreadyLimited
+			alreadyLimited=$(checkIfAlreadyLimited "$interfaceNick")
+			if [ "$alreadyLimited" = 0 ]	#Activate traffic limit
+			then
+				log notice "$interfaceNick is over budget. Activating limit"
+				setTrafficLimit "$interfaceNick" "$upload_limit" "$download_limit" 1
+			fi
+			
+		else
+			if [ "$alreadyLimited" != 0 ] #Deactivate traffic limit
+			then
+				log notice "$interfaceNick is under budget. Deactivating limit"
+				setTrafficLimit "$interfaceNick" "$upload_limit" "$download_limit" 0
+			fi
+		fi
+		
+	fi
+	
+	if [ "$alert_enabled" != 0 ]
+	then
+		if [ "$traffic" -gt  "$threshold" ]
+		then
+			
+			local mailAlreadySent
+			mailAlreadySent=$(checkIfMailAlreadySent "$interfaceNick")
+			if [ "$mailAlreadySent" = 0 ]	#SendMail
+			then
+			
+				log notice "$interfaceNick is over budget. Sending mail"
+			fi
+			
+		else
+			if [ "$mailAlreadySent" != 0 ] #Reset mailAlreadySent
+			then
+				log notice "$interfaceNick is under budget. Deactivating limit"
+			fi
+		fi
+		
+	fi
+}
+
+init() {
+	log notice "trlimit main started"
+	initQosConfig
+}
+
+main() {
+
+	local every=0
+	config_load "$CONFIG_FILE"
+	config_get every service refreshrate
+	
+	MAILTEXT="$(generateMessage testShip interface interfaceNick month 10 10 1)"
+	sendGeneratedMail timuni@hanika.org "testmail" "$MAILTEXT"
+
+	while true ; do 
+	   checkAndLimitForAll
+	   sleep "$every"
+	done
+	 
+	exit 0
+}
+#do main
+main
