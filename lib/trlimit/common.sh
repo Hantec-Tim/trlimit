@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 [ -n "$TRLIMIT_COMMON" ] && return || readonly TRLIMIT_COMMON=1
 
@@ -17,10 +17,10 @@ log() {
 	logger -t trlimit -p "$1" "$2"
 }
 startQOS() {
-	eval "./etc/init.d/qos start"
+	sh "/etc/init.d/qos" "start"
 }
 stopQOS() {
-	eval "./etc/init.d/qos stop"
+	sh "/etc/init.d/qos" "stop"
 }
 
 

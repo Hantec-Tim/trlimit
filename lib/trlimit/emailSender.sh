@@ -20,6 +20,7 @@ The given traffic limit of %s KB on the connection %s/%s for this %s has been su
 %s"
 
 checkIfMailAlreadySent() {
+	local interfaceNick="$1"
 	if [ -f "$MAIL_SENT_FOLDER$interfaceNick" ]
 	then
 		echo 1
@@ -34,7 +35,10 @@ setMailAlreadySent() {
 }
 resetMailAlreadySent() {
 	local interfaceNick="$1"
-	rm "$MAIL_SENT_FOLDER$interfaceNick"
+	if [ -f "$MAIL_SENT_FOLDER$interfaceNick" ]
+	then
+		rm "$MAIL_SENT_FOLDER$interfaceNick"
+	fi
 }
 resetAllMailAlreadySent() {
 	rm "$MAIL_SENT_FOLDER*"
@@ -62,7 +66,7 @@ sendMailForInterfaceLimit() {
 	config_get mailaddress service "mailaddress"
 	
 	local mailtext
-	mailtext="$(generateMessage "$sourcename" "$interface" "$interfaceNick" month "$upload_limit" "$download_limit" "$enabled")"
+	mailtext="$(generateMessage "$sourcename" "$threshold" "$interface" "$interfaceNick" month "$upload_limit" "$download_limit" "$enabled")"
 	
 	sendGeneratedMail "$mailaddress" "TrafficAlert on $sourceName $interface/$interfaceNick" "$mailtext"
 	log notice "Sent mail to $mailaddress about $interface/$interfaceNick."
@@ -80,12 +84,12 @@ generateTrafficLimitText() {
 generateMessage() {
 	local sourceName="$1"
 	local threshold="$2"
-	local interface="$2"
-	local interfaceNick="$3"
-	local interval="$4"
-	local upload="$5"
-	local download="$6"
-	local trafficLimitEnabled="$7"
+	local interface="$3"
+	local interfaceNick="$4"
+	local interval="$5"
+	local upload="$6"
+	local download="$7"
+	local trafficLimitEnabled="$8"
 	local trafficLimitText
 	if [ "$trafficLimitEnabled" != 0 ]
 	then
